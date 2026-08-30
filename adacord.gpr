@@ -1,0 +1,47 @@
+with "aws";
+with "gnatcoll_core";
+with "config/adacord_config.gpr";
+project Adacord is
+
+   for Library_Name use "Adacord";
+   for Library_Version use Project'Library_Name & ".so." & Adacord_Config.Crate_Version;
+
+   for Source_Dirs use ("src/", "config/");
+   for Object_Dir use "obj/" & Adacord_Config.Build_Profile;
+   for Create_Missing_Dirs use "True";
+   for Library_Dir use "lib";
+
+   type Library_Type_Type is ("relocatable", "static", "static-pic");
+   Library_Type : Library_Type_Type :=
+     external ("ADACORD_LIBRARY_TYPE", external ("LIBRARY_TYPE", "static"));
+   for Library_Kind use Library_Type;
+
+   case Library_Type is
+      when "relocatable" =>
+         for Library_Options use ("-lssl", "-lcrypto");
+      when "static" | "static-pic" =>
+         null;
+   end case;
+
+   package Compiler is
+      for Default_Switches ("Ada") use Adacord_Config.Ada_Compiler_Switches;
+   end Compiler;
+
+   package Binder is
+      for Switches ("Ada") use ("-Es"); --  Symbolic traceback
+   end Binder;
+
+   package Linker is
+      case Library_Type is
+         when "relocatable" =>
+            null;
+         when "static" | "static-pic" =>
+            for Linker_Options use ("-lssl", "-lcrypto");
+      end case;
+   end Linker;
+
+   package Install is
+      for Artifacts (".") use ("share");
+   end Install;
+
+end Adacord;

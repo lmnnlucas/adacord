@@ -1,0 +1,22 @@
+name = "adacord"
+description = "An Ada library for building Discord bots"
+version = "0.1.0-dev"
+
+authors = ["Adacord Contributors"]
+maintainers = ["Adacord Contributors <noreply@adacord.invalid>"]
+licenses = "MIT"
+tags = ["discord", "bot", "websocket", "http"]
+
+[[depends-on]]
+aws = "=25.2.0"
+
+[environment.SOCKET]
+set = "openssl"
+
+[[actions]]
+type = "test"
+command = ["alr", "-n", "exec", "--", "gprbuild", "-P", "tests/tests.gpr", "-q"]
+
+[[actions]]
+type = "test"
+command = ["bin/adacord_tests"]

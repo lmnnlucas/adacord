@@ -1,0 +1,17 @@
+/.alire-cache/
+/.alire-msys2/
+/.alire-settings/
+/.alire-toolchains/
+/.tools/
+/alire/
+/config/
+/bin/
+/lib/
+/obj/
+
+*.ali
+*.o
+
+.env
+.env.*
+!.env.example
