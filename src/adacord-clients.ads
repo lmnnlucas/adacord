@@ -36,6 +36,8 @@ package Adacord.Clients is
       Token           : String;
       Gateway_Intents : Adacord.Intents.Intent_Set :=
         Adacord.Intents.Guilds);
+   --  Initialize before sharing the client with other tasks. Initialization
+   --  and reinitialization must be externally serialized with all operations.
 
    procedure Run
      (Self    : in out Client;
@@ -43,6 +45,9 @@ package Adacord.Clients is
    --  Connect to Discord and dispatch callbacks until Stop is called or a
    --  fatal Gateway error occurs. Gateway I/O and heartbeats run in a worker
    --  task, so callback latency does not delay heartbeats.
+   --  At most 1024 events wait for callbacks. Overflow stops the Gateway,
+   --  drains accepted events and reports a fatal On_Error before returning.
+   --  Is_Running remains True until callbacks and the worker have finished.
 
    procedure Stop (Self : in out Client);
 

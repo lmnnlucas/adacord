@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     name: ${{ matrix.os }}
@@ -33,6 +37,7 @@ jobs:
         run: alr -n build
 
       - name: Run offline tests
+        timeout-minutes: 5
         run: alr -n test
 
       - name: Build ping bot example

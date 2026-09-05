@@ -1,5 +1,10 @@
 with Ada.Directories;
+with Ada.Streams;
+with Ada.Streams.Stream_IO;
+with Ada.Characters.Latin_1;
 with Ada.Environment_Variables;
+with Ada.Exceptions;
+with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 
@@ -85,6 +90,11 @@ procedure Adacord_Tests is
       Expect_Invalid_Snowflake ("0");
       Expect_Invalid_Snowflake ("01");
       Expect_Invalid_Snowflake ("-1");
+      Expect_Invalid_Snowflake ("+1");
+      Expect_Invalid_Snowflake (" 1");
+      Expect_Invalid_Snowflake ("1 ");
+      Expect_Invalid_Snowflake ("1_000");
+      Expect_Invalid_Snowflake ("16#FF#");
       Expect_Invalid_Snowflake ("18446744073709551616");
    end Test_Snowflakes;
 
@@ -226,6 +236,88 @@ procedure Adacord_Tests is
          Tests_Run := Tests_Run + 1;
    end Test_Invalid_Event;
 
+   procedure Test_Parser_Boundaries is
+      Message : constant JSON.JSON_Value := JSON.Read
+        ("{""id"":""1"",""channel_id"":""2"","
+         & """author"":{""id"":""3"",""username"":""test""},"
+         & """content"":"""",""timestamp"":""now""}");
+      Interaction : constant JSON.JSON_Value := JSON.Read
+        ("{""id"":""1"",""application_id"":""2"","
+         & """type"":99,""token"":""synthetic"",""version"":1}");
+
+      procedure Reject_Message (Value : JSON.JSON_Value) is
+         Ignored : Adacord.Types.Message;
+      begin
+         Ignored := Adacord.Events.Parse_Message (Value);
+         raise Program_Error with "invalid message should be rejected";
+      exception
+         when Adacord.Invalid_Event =>
+            Tests_Run := Tests_Run + 1;
+      end Reject_Message;
+
+      procedure Reject_Interaction (Value : JSON.JSON_Value) is
+         Ignored : Adacord.Types.Interaction;
+      begin
+         Ignored := Adacord.Events.Parse_Interaction_Create (Value);
+         raise Program_Error with "invalid interaction should be rejected";
+      exception
+         when Adacord.Invalid_Event =>
+            Tests_Run := Tests_Run + 1;
+      end Reject_Interaction;
+   begin
+      declare
+         Parsed : constant Adacord.Types.Message :=
+           Adacord.Events.Parse_Message (Message);
+         Future : constant Adacord.Types.Interaction :=
+           Adacord.Events.Parse_Interaction_Create (Interaction);
+      begin
+         Assert (not Parsed.Guild_ID.Present, "absent optional snowflake");
+         Assert (not Parsed.Is_TTS, "absent boolean defaults to false");
+         Assert (Future.Kind = Adacord.Types.Unknown_Interaction
+                 and then Future.Type_Code = 99,
+                 "future interaction type is preserved");
+      end;
+      Reject_Message (JSON.Read ("null"));
+      Reject_Message (JSON.Read ("[]"));
+      declare
+         Value : constant JSON.JSON_Value := JSON.Clone (Message);
+      begin
+         JSON.Set_Field (Value, "guild_id", JSON.JSON_Null);
+         Assert (not Adacord.Events.Parse_Message (Value).Guild_ID.Present,
+                 "null optional snowflake");
+         JSON.Set_Field (Value, "guild_id", Integer'(2));
+         Reject_Message (Value);
+      end;
+      declare
+         Value : constant JSON.JSON_Value := JSON.Clone (Message);
+      begin
+         JSON.Set_Field (Value, "tts", JSON.JSON_Null);
+         Reject_Message (Value);
+         JSON.Set_Field (Value, "tts", "false");
+         Reject_Message (Value);
+      end;
+      declare
+         Value : constant JSON.JSON_Value := JSON.Clone (Message);
+      begin
+         JSON.Set_Field (Value, "content", JSON.JSON_Null);
+         Reject_Message (Value);
+      end;
+      declare
+         Value : constant JSON.JSON_Value := JSON.Clone (Interaction);
+      begin
+         JSON.Set_Field (Value, "type", Integer'(-1));
+         Reject_Interaction (Value);
+         JSON.Set_Field
+           (Value, "type", JSON.Read
+              (Long_Long_Integer'Image (Long_Long_Integer (Natural'Last) + 1)));
+         Reject_Interaction (Value);
+         JSON.Set_Field (Value, "type", "2");
+         Reject_Interaction (Value);
+         JSON.Set_Field (Value, "type", Integer'(2));
+         Reject_Interaction (Value);
+      end;
+   end Test_Parser_Boundaries;
+
    procedure Test_Configuration_Guards is
       HTTP : Adacord.REST.Client;
       Bot  : Adacord.Clients.Client;
@@ -252,6 +344,43 @@ procedure Adacord_Tests is
       Path      : constant String := Directory & "/adacord_tests.env";
       Name      : constant String := "ADACORD_TEST_DOTENV";
       File      : Ada.Text_IO.File_Type;
+
+      procedure Check_Value (Line : String; Expected : String) is
+      begin
+         declare
+            Raw_File : Ada.Streams.Stream_IO.File_Type;
+            Bytes : Ada.Streams.Stream_Element_Array
+              (1 .. Ada.Streams.Stream_Element_Offset (Line'Length + 1));
+         begin
+            for I in Line'Range loop
+               Bytes (Ada.Streams.Stream_Element_Offset
+                 (I - Line'First + 1)) := Character'Pos (Line (I));
+            end loop;
+            Bytes (Bytes'Last) := 10;
+            Ada.Streams.Stream_IO.Create
+              (Raw_File, Ada.Streams.Stream_IO.Out_File, Path);
+            Ada.Streams.Stream_IO.Write (Raw_File, Bytes);
+            Ada.Streams.Stream_IO.Close (Raw_File);
+         end;
+         Adacord.Config.Load_Dotenv (Path, Override => True);
+         Assert (Ada.Environment_Variables.Value (Name, "") = Expected,
+                 "dotenv syntax value");
+      end Check_Value;
+
+      procedure Check_Invalid (Line : String) is
+      begin
+         Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
+         Ada.Text_IO.Put_Line (File, Line);
+         Ada.Text_IO.Close (File);
+         Adacord.Config.Load_Dotenv (Path, Override => True);
+         raise Program_Error with "invalid dotenv should be rejected";
+      exception
+         when Error : Adacord.Configuration_Error =>
+            Assert (Ada.Strings.Fixed.Index
+                      (Ada.Exceptions.Exception_Message (Error),
+                       "synthetic-secret") = 0,
+                    "dotenv errors do not disclose values");
+      end Check_Invalid;
 
       procedure Cleanup;
 
@@ -292,6 +421,24 @@ procedure Adacord_Tests is
         (Adacord.Config.Required_Value (Name, Path) = "from dotenv",
          "required dotenv value is returned");
 
+      Check_Value
+        (Character'Val (16#EF#) & Character'Val (16#BB#)
+         & Character'Val (16#BF#) & Ada.Characters.Latin_1.HT
+         & "export" & Ada.Characters.Latin_1.HT & Name
+         & Ada.Characters.Latin_1.HT & "=" & Ada.Characters.Latin_1.HT
+         & "bom and tabs" & Ada.Characters.Latin_1.HT, "bom and tabs");
+      Check_Value (Name & "=plain # comment", "plain");
+      Check_Value (Name & "=word#literal", "word#literal");
+      Check_Value (Name & "=""quoted # literal"" # comment",
+                   "quoted # literal");
+      Check_Value (Name & "='single # literal' # comment",
+                   "single # literal");
+      Check_Value (Name & "=""""", "");
+      Check_Value (Name & "= # comment", "");
+      Check_Invalid (Name & "=""synthetic-secret");
+      Check_Invalid (Name & "=""synthetic-secret""garbage");
+      Check_Invalid ("1INVALID=synthetic-secret");
+
       Cleanup;
 
       begin
@@ -323,6 +470,7 @@ begin
    Run_Test
      ("INTERACTION_CREATE parser", Test_Interaction_Event'Access);
    Run_Test ("invalid event", Test_Invalid_Event'Access);
+   Run_Test ("parser boundaries", Test_Parser_Boundaries'Access);
    Run_Test
      ("configuration guards", Test_Configuration_Guards'Access);
    Run_Test ("dotenv configuration", Test_Dotenv'Access);

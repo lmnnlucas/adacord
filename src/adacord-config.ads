@@ -3,6 +3,10 @@ package Adacord.Config is
    --  Load NAME=VALUE entries from Path into the process environment.
    --  A missing file is ignored. Existing environment variables take
    --  precedence unless Override is True.
+   --  Accept a UTF-8 BOM, spaces/tabs, and an optional export prefix.
+   --  Single/double quotes preserve literal contents (no escape expansion).
+   --  A # starts a comment after a quoted value, or after whitespace in an
+   --  unquoted value. A # inside quotes or an unquoted word stays literal.
    procedure Load_Dotenv
      (Path     : String := ".env";
       Override : Boolean := False);

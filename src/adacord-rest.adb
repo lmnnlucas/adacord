@@ -1,5 +1,6 @@
 with Ada.Characters.Handling;
 with Ada.Directories;
+with Ada.Strings.Fixed;
 with Ada.Environment_Variables;
 with Ada.Strings.UTF_Encoding;
 with Ada.Strings.UTF_Encoding.Wide_Wide_Strings;
@@ -9,6 +10,7 @@ with AWS.Headers;
 with AWS.Messages;
 with AWS.Net.SSL;
 with AWS.Response;
+with AWS.URL;
 with GNATCOLL.JSON;
 
 with Adacord.Events;
@@ -21,6 +23,7 @@ package body Adacord.REST is
 
    Max_Attempts : constant Positive := 3;
    HTTP_Timeout : constant Duration := 30.0;
+   Max_Retry_Delay : constant Duration := 60.0;
 
    type Request_Method is (Get_Request, Post_Request);
 
@@ -157,6 +160,7 @@ package body Adacord.REST is
            (Server_Certificate  => "",
             Server_Key          => "",
             Client_Certificate  => "",
+            Check_Certificate   => True,
             Trusted_CA_Filename => CA_File);
       exception
          when Adacord.Configuration_Error =>
@@ -185,7 +189,37 @@ package body Adacord.REST is
 
    function Normalize_API_Base (Value : String) return String is
       Last : Integer := Value'Last;
+      Lower : constant String := Ada.Characters.Handling.To_Lower (Value);
    begin
+      if not (Lower'Length > 7 and then
+              Lower (Lower'First .. Lower'First + 6) = "http://")
+        and then not (Lower'Length > 8 and then
+              Lower (Lower'First .. Lower'First + 7) = "https://")
+      then
+         raise Adacord.Configuration_Error with
+           "the Discord API base must be an absolute HTTP(S) URL";
+      end if;
+
+      for C of Value loop
+         if C <= ' ' or else C >= Character'Val (127)
+           or else C in '?' | '#' | '@' | '\'
+         then
+            raise Adacord.Configuration_Error with
+              "the Discord API base contains an invalid URL character";
+         end if;
+      end loop;
+
+      declare
+         Parsed : constant AWS.URL.Object := AWS.URL.Parse (Value);
+      begin
+         if AWS.URL.Host (Parsed)'Length = 0
+           or else AWS.URL.Port (Parsed) > 65_535
+         then
+            raise Adacord.Configuration_Error with
+              "the Discord API base has an invalid host or port";
+         end if;
+      end;
+
       while Last >= Value'First and then Value (Last) = '/' loop
          Last := Last - 1;
       end loop;
@@ -195,7 +229,49 @@ package body Adacord.REST is
       else
          return Value (Value'First .. Last);
       end if;
+   exception
+      when AWS.URL.URL_Error | Constraint_Error =>
+         raise Adacord.Configuration_Error with
+           "the Discord API base URL is invalid";
    end Normalize_API_Base;
+
+   --  Header values must never introduce additional HTTP headers. Tokens
+   --  are visible ASCII; User-Agent additionally permits spaces.
+   procedure Validate_Header
+     (Value : String; Context : String; Allow_Spaces : Boolean := False)
+   is
+   begin
+      for C of Value loop
+         if C < ' ' or else C >= Character'Val (127)
+           or else (C = ' ' and then not Allow_Spaces)
+         then
+            raise Adacord.Configuration_Error with
+              Context & " contains an invalid HTTP header character";
+         end if;
+      end loop;
+   end Validate_Header;
+
+   function Interaction_Token_Path (Value : String) return String is
+      Hex : constant String := "0123456789ABCDEF";
+      Result : Unbounded_String;
+   begin
+      if Value'Length = 0 or else Value = "." or else Value = ".." then
+         raise Adacord.Configuration_Error with
+           "the Discord interaction token must be a nonempty path segment";
+      end if;
+      Validate_Header (Value, "Discord interaction token");
+      for C of Value loop
+         if C in 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' | '_' | '.' | '~'
+         then
+            Append (Result, C);
+         else
+            Append (Result, '%');
+            Append (Result, Hex (Character'Pos (C) / 16 + 1));
+            Append (Result, Hex (Character'Pos (C) mod 16 + 1));
+         end if;
+      end loop;
+      return To_String (Result);
+   end Interaction_Token_Path;
 
    ---------------------
    -- Character_Count --
@@ -353,11 +429,11 @@ package body Adacord.REST is
          end case;
       end;
 
-      if Seconds < 0.0
-        or else Seconds > Long_Float (Duration'Last)
+      if not (Seconds >= 0.0
+              and then Seconds <= Long_Float (Max_Retry_Delay))
       then
          raise Adacord.Rate_Limit_Error with
-           "Discord retry_after is outside Duration range";
+           "Discord retry_after is outside the allowed 0..60 second range";
       end if;
 
       return Duration (Seconds);
@@ -394,14 +470,35 @@ package body Adacord.REST is
                User_Agent         => To_String (Self.User_Agent));
 
          when Post_Request =>
-            return AWS.Client.Post
-              (URL          => URL,
-               Data         => Payload,
-               Content_Type => "application/json",
-               Timeouts     =>
-                 AWS.Client.Timeouts (Each => HTTP_Timeout),
-               Headers      => Headers,
-               User_Agent   => To_String (Self.User_Agent));
+            declare
+               Connection : AWS.Client.HTTP_Connection;
+               Result : AWS.Response.Data;
+               Path_First : constant Natural := Ada.Strings.Fixed.Index
+                 (URL, "/", From => Ada.Strings.Fixed.Index (URL, "://") + 3);
+            begin
+               --  A lost response may follow a successful write. Do not
+               --  replay a non-idempotent POST after a transport failure.
+               AWS.Client.Create
+                 (Connection,
+                  Host       => URL,
+                  Retry      => 0,
+                  Persistent => False,
+                  Timeouts   => AWS.Client.Timeouts (Each => HTTP_Timeout),
+                  User_Agent => To_String (Self.User_Agent));
+               AWS.Client.Post
+                 (Connection,
+                  Result,
+                  URI          => URL (Path_First .. URL'Last),
+                  Data         => Payload,
+                  Content_Type => "application/json",
+                  Headers      => Headers);
+               AWS.Client.Close (Connection);
+               return Result;
+            exception
+               when others =>
+                  AWS.Client.Close (Connection);
+                  raise;
+            end;
       end case;
    exception
       when others =>
@@ -487,6 +584,9 @@ package body Adacord.REST is
            "the Discord HTTP User-Agent must not be empty";
       end if;
 
+      Validate_Header (Token, "Discord bot token");
+      Validate_Header (User_Agent, "Discord User-Agent", Allow_Spaces => True);
+
       Configure_TLS (Normalized_Base);
 
       Self.Token := To_Unbounded_String (Token);
@@ -570,7 +670,7 @@ package body Adacord.REST is
       if Content'Length = 0 then
          raise Adacord.Configuration_Error with
            "Discord message content must not be empty";
-      elsif Content'Length > 2_000 then
+      elsif Character_Count (Content, "Discord message content") > 2_000 then
          raise Adacord.Configuration_Error with
            "Discord message content exceeds 2000 characters";
       end if;
@@ -603,6 +703,10 @@ package body Adacord.REST is
               Parse_JSON (Response_Text, "message");
          begin
             return Adacord.Events.Parse_Message (Message_JSON);
+         exception
+            when Adacord.Invalid_Event =>
+               raise Adacord.Protocol_Error with
+                 "Discord returned an invalid message";
          end;
       end;
    end Send_Message;
@@ -704,7 +808,8 @@ package body Adacord.REST is
       if Content'Length = 0 then
          raise Adacord.Configuration_Error with
            "Discord interaction response must not be empty";
-      elsif Content'Length > 2_000 then
+      elsif Character_Count (Content, "Discord interaction response") > 2_000
+      then
          raise Adacord.Configuration_Error with
            "Discord interaction response exceeds 2000 characters";
       end if;
@@ -738,7 +843,7 @@ package body Adacord.REST is
             & "/interactions/"
             & Adacord.Types.Image (Interaction.ID)
             & "/"
-            & To_String (Interaction.Token)
+            & Interaction_Token_Path (To_String (Interaction.Token))
             & "/callback",
             GNATCOLL.JSON.Write (Payload),
             Authenticated => False);

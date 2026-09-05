@@ -9,6 +9,7 @@ tags = ["discord", "bot", "websocket", "http"]
 
 [[depends-on]]
 aws = "=25.2.0"
+gnatcoll = "~25.0.0"
 
 [environment.SOCKET]
 set = "openssl"
@@ -20,3 +21,15 @@ command = ["alr", "-n", "exec", "--", "gprbuild", "-P", "tests/tests.gpr", "-q"]
 [[actions]]
 type = "test"
 command = ["bin/adacord_tests"]
+
+[[actions]]
+type = "test"
+command = ["bin/client_tests"]
+
+[[actions]]
+type = "test"
+command = ["bin/rest_tests"]
+
+[[actions]]
+type = "test"
+command = ["bin/gateway_tests"]

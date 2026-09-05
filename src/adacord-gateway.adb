@@ -394,8 +394,6 @@ package body Adacord.Gateway is
             begin
                AWS.Net.WebSocket.Connect
                  (Socket, Gateway_URI (To_String (Current_URL)));
-               AWS.Net.WebSocket.Buffered_Client_Fix.Recover_Buffered_Message
-                 (Socket);
                Hello_Deadline :=
                  Real_Time.Clock + Real_Time.To_Time_Span (15.0);
                Connected := True;
@@ -430,7 +428,19 @@ package body Adacord.Gateway is
                      end;
                   end if;
 
-                  if AWS.Net.WebSocket.Poll (Socket, Timeout) then
+                  --  The HTTP upgrade may already have buffered one or more
+                  --  frames. Consume those before polling the OS descriptor,
+                  --  and never overwrite a message awaiting dispatch.
+                  if not Socket.Message_Ready then
+                     AWS.Net.WebSocket.Buffered_Client_Fix
+                       .Recover_Buffered_Message (Socket);
+                  end if;
+
+                  if not Socket.Message_Ready
+                    and then not Socket.Closed
+                    and then not Socket.Failed
+                    and then AWS.Net.WebSocket.Poll (Socket, Timeout)
+                  then
                      null;
                   end if;
                exception
@@ -511,6 +521,8 @@ package body Adacord.Gateway is
                                        Backoff := 1.0;
                                        Handle_Ready (Sink, Event);
                                     end;
+                                 elsif Event_Name = "RESUMED" then
+                                    Backoff := 1.0;
                                  elsif Event_Name = "MESSAGE_CREATE" then
                                     Handle_Message_Create
                                       (Sink,
@@ -528,13 +540,10 @@ package body Adacord.Gateway is
                               Socket.Send
                                 (Heartbeat_Payload
                                    (Has_Sequence, Sequence));
-                              Awaiting_ACK := True;
-                              if Hello_Received then
-                                 Next_Heartbeat :=
-                                   Real_Time.Clock
-                                   + Real_Time.To_Time_Span
-                                     (Heartbeat_Interval);
-                              end if;
+                              --  A requested heartbeat supplements the regular
+                              --  schedule. Only scheduled heartbeats start the
+                              --  ACK deadline, so a request just before a tick
+                              --  cannot cause a premature disconnect.
 
                            when 7 =>
                               Reconnect := True;
@@ -663,7 +672,14 @@ package body Adacord.Gateway is
               and then Socket.Get_FD /= AWS.Net.No_Socket
             then
                begin
-                  Socket.Close ("Adacord reconnecting");
+                  if Stop_Requested (Sink) then
+                     Socket.Close ("Adacord stopping");
+                  else
+                     --  Discord invalidates sessions closed with 1000/1001.
+                     Socket.Close
+                       ("Adacord reconnecting",
+                        AWS.Net.WebSocket.Internal_Server_Error);
+                  end if;
                exception
                   when others =>
                      null;
@@ -676,6 +692,7 @@ package body Adacord.Gateway is
          end;
 
          if Clear_Session then
+            Current_URL := To_Unbounded_String (Initial_URL);
             Session_ID := Null_Unbounded_String;
             Has_Sequence := False;
             Sequence := 0;

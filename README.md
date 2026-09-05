@@ -25,8 +25,9 @@ alr build
 alr test
 ```
 
-La commande `alr test` construit et exécute les 39 assertions hors ligne. Pour
-lancer directement le binaire déjà construit :
+La commande `alr test` construit et exécute quatre suites hors ligne : types et
+configuration, cycle de vie et file d’événements, REST sur un serveur HTTP local,
+et décodage WebSocket en mémoire. Pour relancer une suite déjà construite :
 
 ```sh
 # Linux/macOS
@@ -84,6 +85,11 @@ Le bot charge automatiquement `.env` depuis le dossier courant. Une variable
 `DISCORD_BOT_TOKEN` déjà définie dans l’environnement reste prioritaire, ce qui
 permet d’utiliser les secrets du système en production et dans la CI. Le fichier
 `.env` est ignoré par Git ; seul `.env.example`, sans secret, est versionné.
+Les fichiers UTF-8 avec BOM sont acceptés, ainsi que les tabulations, le préfixe
+`export`, les valeurs entre guillemets simples ou doubles et les commentaires.
+Dans une valeur non citée, `#` introduit un commentaire après un espace ;
+`mot#suffixe` reste littéral. Les échappements et substitutions de variables ne
+sont pas interprétés.
 Le lancement via `alr exec` rend également les bibliothèques TLS disponibles
 sur toutes les plateformes. Adacord recherche automatiquement le magasin de
 certificats d’Alire et les emplacements système usuels. Si nécessaire, un
@@ -151,6 +157,14 @@ Adacord.Clients.Run (Bot, Callbacks);
 exécutés dans la tâche appelante ; la Gateway conserve sa propre tâche pour les
 heartbeats et les reconnexions.
 
+La file conserve au maximum 1 024 événements en attente. Si les handlers ne
+suivent plus le débit, le client arrête la Gateway, traite les événements déjà
+acceptés, puis signale une erreur fatale via `On_Error`. Cela borne le nombre
+d’événements conservés sans bloquer la tâche réseau. `Is_Running` reste vrai
+jusqu’à la fin du traitement des callbacks. Initialiser le client avant de le
+partager entre tâches ; la réinitialisation doit être sérialisée avec ses autres
+opérations.
+
 ## API actuelle
 
 - `Adacord.Clients` : client haut niveau, cycle de vie, handlers, messages,
@@ -168,6 +182,14 @@ Les mentions automatiques sont désactivées lors d’un envoi (`allowed_mention
 vide), ce qui évite qu’un contenu réutilisé déclenche accidentellement
 `@everyone` ou une autre mention.
 
+Les contenus des messages et réponses sont validés en UTF-8, avec une limite de
+2 000 caractères Unicode plutôt que de 2 000 octets. Les valeurs d’en-tête HTTP
+sont contrôlées et les tokens d’interaction sont encodés dans les URL.
+Les réponses `429` autorisent au maximum deux nouvelles tentatives, chacune
+avec une attente maximale de 60 secondes ; au-delà, `Rate_Limit_Error` est levée
+sans nouvelle tentative. Un POST n’est pas rejoué automatiquement après une
+erreur de transport, pour éviter un doublon si la réponse a été perdue.
+
 ## Limites de la version 0.1
 
 La première prise en charge des commandes slash couvre les commandes globales
@@ -178,7 +200,15 @@ encore gérés. Le client récupère toutefois le nombre de shards recommandé d
 `Adacord.REST.Gateway_Info` pour une future extension.
 
 Les tests sont entièrement hors ligne : aucun token Discord n’est nécessaire
-et aucun message réel n’est envoyé.
+et aucun message réel n’est envoyé. La suite REST ouvre uniquement un serveur
+sur `127.0.0.1`, avec un port attribué automatiquement.
+
+La version AWS utilisée conserve certains appels réseau bloquants : `Stop`
+demande un arrêt mais ne garantit pas un délai maximal de retour. Le magasin de
+certificats AWS est global au processus ; configurer `ADACORD_CA_BUNDLE` avant
+la première initialisation HTTPS. La coordination globale des rate limits,
+les quotas d’identification sur les reconnexions et les scénarios Gateway réels
+restent à approfondir.
 
 ## Ressources Discord
 

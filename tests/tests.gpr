@@ -6,7 +6,9 @@ project Tests is
    for Object_Dir use "../obj/tests";
    for Exec_Dir use "../bin";
    for Create_Missing_Dirs use "True";
-   for Main use ("adacord_tests.adb");
+   for Main use
+     ("adacord_tests.adb", "client_tests.adb", "rest_tests.adb",
+      "gateway_tests.adb");
 
    package Compiler is
       for Default_Switches ("Ada") use

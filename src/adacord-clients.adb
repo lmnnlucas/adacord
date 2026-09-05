@@ -1,4 +1,4 @@
-with Ada.Containers.Vectors;
+with Adacord.Bounded_Queues;
 
 with Adacord.Gateway;
 
@@ -29,17 +29,12 @@ package body Adacord.Clients is
       end case;
    end record;
 
-   package Item_Vectors is new Ada.Containers.Vectors
-     (Index_Type   => Positive,
-      Element_Type => Queue_Item);
+   package Event_Queues is new Adacord.Bounded_Queues
+     (Element_Type  => Queue_Item,
+      Empty_Element => (Kind => Finished_Item),
+      Capacity      => 1_024);
 
-   protected type Event_Queue is
-      procedure Push (Item : Queue_Item);
-      entry Pop (Item : out Queue_Item);
-   private
-      Items : Item_Vectors.Vector;
-      Count : Natural := 0;
-   end Event_Queue;
+   subtype Event_Queue is Event_Queues.Queue;
 
    type Queue_Sink
      (Queue : not null access Event_Queue;
@@ -106,26 +101,14 @@ package body Adacord.Clients is
 
    end Lifecycle;
 
-   -----------------
-   -- Event_Queue --
-   -----------------
-
-   protected body Event_Queue is
-
-      procedure Push (Item : Queue_Item) is
-      begin
-         Items.Append (Item);
-         Count := Count + 1;
-      end Push;
-
-      entry Pop (Item : out Queue_Item) when Count > 0 is
-      begin
-         Item := Items.First_Element;
-         Items.Delete_First;
-         Count := Count - 1;
-      end Pop;
-
-   end Event_Queue;
+   procedure Enqueue (Sink : in out Queue_Sink; Item : Queue_Item) is
+      Accepted : Boolean;
+   begin
+      Sink.Queue.Push (Item, Accepted);
+      if not Accepted then
+         Sink.Life.Request_Stop;
+      end if;
+   end Enqueue;
 
    ------------------
    -- Handle_Ready --
@@ -135,7 +118,7 @@ package body Adacord.Clients is
      (Sink  : in out Queue_Sink;
       Event : Adacord.Types.Ready) is
    begin
-      Sink.Queue.Push ((Kind => Ready_Item, Ready_Event => Event));
+      Enqueue (Sink, (Kind => Ready_Item, Ready_Event => Event));
    end Handle_Ready;
 
    ---------------------------
@@ -146,8 +129,8 @@ package body Adacord.Clients is
      (Sink  : in out Queue_Sink;
       Event : Adacord.Types.Message) is
    begin
-      Sink.Queue.Push
-        ((Kind => Message_Create_Item, Message_Event => Event));
+      Enqueue
+        (Sink, (Kind => Message_Create_Item, Message_Event => Event));
    end Handle_Message_Create;
 
    -------------------------------
@@ -158,8 +141,8 @@ package body Adacord.Clients is
      (Sink  : in out Queue_Sink;
       Event : Adacord.Types.Interaction) is
    begin
-      Sink.Queue.Push
-        ((Kind              => Interaction_Create_Item,
+      Enqueue
+        (Sink, (Kind              => Interaction_Create_Item,
           Interaction_Event => Event));
    end Handle_Interaction_Create;
 
@@ -172,8 +155,8 @@ package body Adacord.Clients is
       Details : String;
       Fatal   : Boolean) is
    begin
-      Sink.Queue.Push
-        ((Kind    => Error_Item,
+      Enqueue
+        (Sink, (Kind    => Error_Item,
           Details => To_Unbounded_String (Details),
           Fatal   => Fatal));
    end Handle_Error;
@@ -217,6 +200,7 @@ package body Adacord.Clients is
      (Self    : in out Client;
       Handler : in out Event_Handler'Class)
    is
+      Started : Boolean := False;
 
       procedure Report_Callback_Failure;
 
@@ -240,6 +224,7 @@ package body Adacord.Clients is
       end if;
 
       Self.Life.Start;
+      Started := True;
 
       declare
          Gateway_Info : constant Adacord.REST.Gateway_Info :=
@@ -275,14 +260,19 @@ package body Adacord.Clients is
                end;
             end if;
 
-            Self.Life.Finish;
-            Queue.Push ((Kind => Finished_Item));
+            Queue.Finish;
+         exception
+            when others =>
+               --  Always release the consumer, even if error reporting fails.
+               Queue.Finish;
          end Worker;
 
          Item : Queue_Item;
+         Available : Boolean;
       begin
          loop
-            Queue.Pop (Item);
+            Queue.Pop (Item, Available);
+            exit when not Available;
 
             case Item.Kind is
                when Ready_Item =>
@@ -326,10 +316,30 @@ package body Adacord.Clients is
                   exit;
             end case;
          end loop;
+         if Queue.Overflowed then
+            begin
+               Handler.On_Error
+                 (Self, "Discord event queue exceeded 1024 pending events; "
+                  & "the client stopped because callbacks are too slow",
+                  Fatal => True);
+            exception
+               when others =>
+                  null;
+            end;
+         end if;
+      exception
+         when others =>
+            --  Request shutdown before waiting for the dependent task.
+            Self.Life.Request_Stop;
+            raise;
       end;
+      Self.Life.Finish;
    exception
       when others =>
-         Self.Life.Finish;
+         --  A rejected concurrent Run must not stop the existing owner.
+         if Started then
+            Self.Life.Finish;
+         end if;
          raise;
    end Run;
 

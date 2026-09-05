@@ -1,11 +1,38 @@
 with Ada.Environment_Variables;
-with Ada.Strings;
+with Ada.Characters.Latin_1;
 with Ada.Strings.Fixed;
 with Ada.Text_IO;
 
 package body Adacord.Config is
 
-   use Ada.Strings;
+   function Is_Whitespace (Value : Character) return Boolean is
+     (Value = ' ' or else Value = Ada.Characters.Latin_1.HT
+      or else Value = Ada.Characters.Latin_1.CR);
+
+   function Trim (Value : String) return String is
+      First : Integer := Value'First;
+      Last  : Integer := Value'Last;
+   begin
+      while First <= Last and then Is_Whitespace (Value (First)) loop
+         First := First + 1;
+      end loop;
+      while Last >= First and then Is_Whitespace (Value (Last)) loop
+         Last := Last - 1;
+      end loop;
+      return Value (First .. Last);
+   end Trim;
+
+   function Without_BOM (Value : String) return String is
+   begin
+      if Value'Length >= 3
+        and then Value (Value'First .. Value'First + 2) =
+          Character'Val (16#EF#) & Character'Val (16#BB#)
+          & Character'Val (16#BF#)
+      then
+         return Value (Value'First + 3 .. Value'Last);
+      end if;
+      return Value;
+   end Without_BOM;
 
    function Is_Letter (Value : Character) return Boolean is
      (Value in 'A' .. 'Z' or else Value in 'a' .. 'z');
@@ -39,22 +66,37 @@ package body Adacord.Config is
    function Parsed_Value (Raw_Value : String) return String;
 
    function Parsed_Value (Raw_Value : String) return String is
-      Value : constant String := Ada.Strings.Fixed.Trim (Raw_Value, Both);
+      Value : constant String := Trim (Raw_Value);
    begin
       if Value'Length = 0 then
          return "";
       end if;
 
       if Value (Value'First) = '"' or else Value (Value'First) = ''' then
-         if Value'Length < 2
-           or else Value (Value'Last) /= Value (Value'First)
-         then
-            raise Constraint_Error with "unterminated quoted value";
-         end if;
-
-         return Value (Value'First + 1 .. Value'Last - 1);
+         for Index in Value'First + 1 .. Value'Last loop
+            if Value (Index) = Value (Value'First) then
+               declare
+                  Tail : constant String :=
+                    Trim (Value (Index + 1 .. Value'Last));
+               begin
+                  if Tail'Length > 0 and then Tail (Tail'First) /= '#' then
+                     raise Constraint_Error with "text after quoted value";
+                  end if;
+                  return Value (Value'First + 1 .. Index - 1);
+               end;
+            end if;
+         end loop;
+         raise Constraint_Error with "unterminated quoted value";
       end if;
 
+      for Index in Value'Range loop
+         if Value (Index) = '#'
+           and then (Index = Value'First
+                     or else Is_Whitespace (Value (Index - 1)))
+         then
+            return Trim (Value (Value'First .. Index - 1));
+         end if;
+      end loop;
       return Value;
    end Parsed_Value;
 
@@ -79,7 +121,8 @@ package body Adacord.Config is
             declare
                Original : constant String := Ada.Text_IO.Get_Line (File);
                Trimmed  : constant String :=
-                 Ada.Strings.Fixed.Trim (Original, Both);
+                 Trim (if Line_Number = 1 then Without_BOM (Original)
+                       else Original);
             begin
                if Trimmed'Length > 0
                  and then Trimmed (Trimmed'First) /= '#'
@@ -88,10 +131,12 @@ package body Adacord.Config is
                      Without_Export : constant String :=
                        (if Trimmed'Length > 7
                           and then Trimmed
-                            (Trimmed'First .. Trimmed'First + 6) = "export "
-                        then Ada.Strings.Fixed.Trim
+                            (Trimmed'First .. Trimmed'First + 5) = "export"
+                          and then Is_Whitespace
+                            (Trimmed (Trimmed'First + 6))
+                        then Trim
                           (Trimmed
-                             (Trimmed'First + 7 .. Trimmed'Last), Both)
+                             (Trimmed'First + 7 .. Trimmed'Last))
                         else Trimmed);
                      Separator : constant Natural :=
                        Ada.Strings.Fixed.Index (Without_Export, "=");
@@ -101,9 +146,9 @@ package body Adacord.Config is
                      end if;
 
                      declare
-                        Name : constant String := Ada.Strings.Fixed.Trim
+                        Name : constant String := Trim
                           (Without_Export
-                             (Without_Export'First .. Separator - 1), Both);
+                             (Without_Export'First .. Separator - 1));
                         Value : constant String := Parsed_Value
                           (Without_Export
                              (Separator + 1 .. Without_Export'Last));

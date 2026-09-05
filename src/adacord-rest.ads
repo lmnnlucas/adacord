@@ -12,6 +12,12 @@ package Adacord.REST is
       API_Base   : String := "https://discord.com/api/v10";
       User_Agent : String :=
         "DiscordBot (https://github.com/adacord/adacord, 0.1.0)");
+   --  API_Base is an absolute HTTP(S) URL without credentials, query or
+   --  fragment. HTTP is useful for local test servers. Tokens and User-Agent
+   --  must contain printable ASCII only; tokens cannot contain spaces.
+   --  Invalid configuration raises Configuration_Error before any request.
+   --  Requests retry HTTP 429 at most twice, honoring retry_after up to 60
+   --  seconds per delay; larger or malformed delays raise Rate_Limit_Error.
 
    type Gateway_Info is record
       URL                      : Ada.Strings.Unbounded.Unbounded_String;
