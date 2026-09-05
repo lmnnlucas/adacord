@@ -5,34 +5,36 @@ comme source de documentation. Les blocs `--` placés après une déclaration
 décrivent l’entité précédente ; les balises `@param`, `@return`, `@exception`,
 `@field` et `@enum` structurent les informations pour GNATdoc.
 
-La référence lisible est disponible dans [`api.md`](api.md). Elle est générée
-à partir des spécifications publiques actuelles et sert aussi de version
-consultable dans GitHub.
+La synthèse lisible est disponible dans [`api.md`](api.md). Elle est maintenue
+manuellement à partir des spécifications publiques et reste consultable dans
+GitHub. La génération GNATdoc ne met pas à jour ce fichier.
 
 ## Génération HTML avec GNATdoc
 
 GNATdoc est l’outil Ada équivalent à Javadoc. Il lit le projet GPR et produit
 des pages HTML avec liens croisés entre packages et déclarations. Il est
-distribué avec GNAT Studio. La version à choisir doit correspondre au
-compilateur GNAT utilisé pour le projet ; GNATdoc 25.2 est limité à GNAT < 15,
-alors que ce crate utilise actuellement GNAT 15 avec AWS 25.
+disponible sous forme de distribution binaire Alire `gnatdoc_bin=26.0.0`,
+utilisée par la CI avec GNAT 15 et AWS 25.
 
 Depuis un environnement où `gnatdoc` est dans le `PATH` :
 
 ```sh
-gnatdoc -P adacord.gpr --backend=html --generate=public \
+alr -n exec -- gnatdoc -P adacord.gpr --backend=html --generate=public \
   --style=gnat --warnings -O docs/generated
 ```
+
+`alr exec` fournit les chemins des projets AWS/GNATCOLL et du compilateur.
+Un appel direct à GNATdoc hors de cet environnement peut échouer à charger
+les dépendances. Le script `tools/generate-docs.ps1` utilise aussi `alr exec`.
 
 La même configuration est enregistrée dans `adacord.gpr` via le package
 `Documentation`. Le dossier `docs/generated/` contient la sortie générée et ne
 doit pas être modifié à la main. Il est ignoré par Git pour éviter de mélanger
 les fichiers dérivés et les sources.
 
-GNATdoc n’est pas installé automatiquement par ce dépôt. GNATdoc 25.2 doit
-être exécuté dans un environnement GNAT antérieur à 15 ; GNATdoc 26 demande la
-pile de dépendances 26. Installer une version compatible via GNAT Studio ou
-un environnement Ada séparé, puis relancer la commande ci-dessus.
+Pour une installation locale, installer `gnatdoc_bin=26.0.0` avec `alr install`
+et ajouter le dossier `bin` du préfixe d’installation au `PATH`. Cette
+distribution évite de compiler les dépendances du générateur dans le projet.
 
 La pipeline GitHub Actions utilise la distribution binaire `gnatdoc_bin` 26
 dans un job Ubuntu dédié. Elle reconstruit les dépendances avec le toolchain

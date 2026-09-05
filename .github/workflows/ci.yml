@@ -33,12 +33,29 @@ jobs:
           alr -n toolchain --select
           gnat_native=15.2.1 gprbuild=26.0.1
 
+      - name: Configure Windows native dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msysRoot = Join-Path $env:RUNNER_TEMP 'adacord-msys2'
+          alr settings --global --set msys2.install_dir $msysRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Join-Path $msysRoot 'mingw64/bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Build library
         run: alr -n build
 
       - name: Run offline tests
         timeout-minutes: 5
         run: alr -n test
+
+      - name: Upload test failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-${{ matrix.os }}
+          path: alire/alr_test_local.log
+          if-no-files-found: ignore
 
       - name: Build ping bot example
         run: alr -n exec -- gprbuild -P examples/ping_bot.gpr -q
@@ -69,7 +86,7 @@ jobs:
       - name: Generate HTML documentation
         run: |
           export PATH="$RUNNER_TEMP/gnatdoc/bin:$PATH"
-          gnatdoc -P adacord.gpr \
+          alr -n exec -- gnatdoc -P adacord.gpr \
             --backend=html \
             --generate=public \
             --style=gnat \

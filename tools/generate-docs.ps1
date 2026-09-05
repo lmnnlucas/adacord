@@ -11,7 +11,7 @@ $outputDirectory = Join-Path $repoRoot "docs/generated"
 $gnatdoc = Get-Command gnatdoc -ErrorAction SilentlyContinue
 
 if ($null -eq $gnatdoc) {
-    throw "gnatdoc is not available in PATH. Install GNAT Studio/GNATdoc 25.2 first."
+    throw "gnatdoc is not available in PATH. Install GNATdoc 26 first."
 }
 
 $arguments = @(
@@ -28,7 +28,7 @@ if ($Warnings) {
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 Push-Location $repoRoot
 try {
-    & $gnatdoc.Source $arguments
+    & alr -n exec -- $gnatdoc.Source @arguments
     if ($LASTEXITCODE -ne 0) {
         throw "gnatdoc failed with exit code $LASTEXITCODE"
     }
