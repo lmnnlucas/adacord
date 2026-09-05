@@ -42,3 +42,43 @@ jobs:
 
       - name: Build ping bot example
         run: alr -n exec -- gprbuild -P examples/ping_bot.gpr -q
+
+  documentation:
+    name: Generate API documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Alire
+        uses: alire-project/setup-alire@v6
+
+      - name: Select GNAT toolchain
+        run: >-
+          alr -n toolchain --select
+          gnat_native=15.2.1 gprbuild=26.0.1
+
+      - name: Build project dependencies
+        run: alr -n build
+
+      - name: Install GNATdoc
+        run: alr -n install --prefix "$RUNNER_TEMP/gnatdoc" gnatdoc_bin=26.0.0
+
+      - name: Generate HTML documentation
+        run: |
+          export PATH="$RUNNER_TEMP/gnatdoc/bin:$PATH"
+          gnatdoc -P adacord.gpr \
+            --backend=html \
+            --generate=public \
+            --style=gnat \
+            --warnings \
+            -O docs/generated
+
+      - name: Upload HTML documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: adacord-api-docs
+          path: docs/generated
+          if-no-files-found: error

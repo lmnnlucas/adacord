@@ -34,6 +34,11 @@ GNATdoc n’est pas installé automatiquement par ce dépôt. GNATdoc 25.2 doit
 pile de dépendances 26. Installer une version compatible via GNAT Studio ou
 un environnement Ada séparé, puis relancer la commande ci-dessus.
 
+La pipeline GitHub Actions utilise la distribution binaire `gnatdoc_bin` 26
+dans un job Ubuntu dédié. Elle reconstruit les dépendances avec le toolchain
+du projet, génère les pages HTML et publie `docs/generated/` comme artifact
+`adacord-api-docs` pour chaque push et chaque pull request.
+
 ## Conventions de documentation
 
 - Les API publiques sont documentées dans les `.ads`, jamais uniquement dans
