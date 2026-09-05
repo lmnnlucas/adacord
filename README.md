@@ -167,6 +167,10 @@ opérations.
 
 ## API actuelle
 
+La référence complète de l’API est disponible dans [`docs/api.md`](docs/api.md).
+Les spécifications Ada contiennent les mêmes commentaires structurés pour une
+génération HTML avec GNATdoc ; voir [`docs/README.md`](docs/README.md).
+
 - `Adacord.Clients` : client haut niveau, cycle de vie, handlers, messages,
   commandes globales et réponses aux interactions.
 - `Adacord.Config` : chargement portable des fichiers `.env` et paramètres

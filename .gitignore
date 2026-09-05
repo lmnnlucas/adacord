@@ -9,6 +9,7 @@
 /lib/
 /obj/
 /local-notes/
+/docs/generated/
 
 *.ali
 *.o

@@ -44,4 +44,8 @@ project Adacord is
       for Artifacts (".") use ("share");
    end Install;
 
+   package Documentation is
+      for Output_Dir ("html") use "docs/generated";
+   end Documentation;
+
 end Adacord;
