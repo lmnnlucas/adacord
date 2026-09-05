@@ -37,7 +37,9 @@ un environnement Ada séparé, puis relancer la commande ci-dessus.
 La pipeline GitHub Actions utilise la distribution binaire `gnatdoc_bin` 26
 dans un job Ubuntu dédié. Elle reconstruit les dépendances avec le toolchain
 du projet, génère les pages HTML et publie `docs/generated/` comme artifact
-`adacord-api-docs` pour chaque push et chaque pull request.
+`adacord-api-docs` pour chaque push et chaque pull request. Pour un push sur
+`main`, un second job déploie la même sortie sur GitHub Pages, à l’adresse
+`https://lmnnlucas.github.io/adacord/`.
 
 ## Conventions de documentation
 

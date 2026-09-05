@@ -82,3 +82,26 @@ jobs:
           name: adacord-api-docs
           path: docs/generated
           if-no-files-found: error
+
+      - name: Prepare GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/generated
+
+  deploy-pages:
+    name: Deploy API documentation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
